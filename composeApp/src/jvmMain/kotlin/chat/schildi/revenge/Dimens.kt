@@ -28,6 +28,8 @@ object Dimens {
     val verticalArrangementSmall = Arrangement.spacedBy(listPaddingSmall)
 
     val topAppBarIconSize = 36.dp
+    val topAppBarCompactAvatarSize = 44.dp
+    val topAppBarCompactMinHeight = 68.dp
     val topAppBarMinHeight = 48.dp
     val compactActionBarThreshold = 600.dp
 
@@ -133,6 +135,11 @@ object Dimens {
         object Composer {
             val buttonWidth = 48.dp
             val buttonHeight = 48.dp
+
+            // Compact (mobile-style) composer
+            val compactPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+            val compactAddButtonSize = 44.dp
+            val compactFieldShape = RoundedCornerShape(28.dp)
         }
 
         object MessageSwipe {

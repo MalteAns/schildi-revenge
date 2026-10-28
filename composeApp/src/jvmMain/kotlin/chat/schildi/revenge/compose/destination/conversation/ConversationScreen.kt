@@ -7,6 +7,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.background
 import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -16,11 +17,10 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -29,6 +29,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -45,11 +46,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draganddrop.DragAndDropEvent
 import androidx.compose.ui.draganddrop.DragAndDropTarget
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.lifecycle.viewmodel.compose.viewModel
 import chat.schildi.lib.preferences.ScPrefs
 import chat.schildi.revenge.Anim
-import chat.schildi.revenge.model.conversation.ConversationViewModel
 import chat.schildi.revenge.Destination
 import chat.schildi.revenge.Dimens
 import chat.schildi.revenge.LocalDestinationState
@@ -80,11 +81,13 @@ import chat.schildi.revenge.matrixBodyDrawStyle
 import chat.schildi.revenge.matrixBodyFormatter
 import chat.schildi.revenge.model.CheckpointLoadState
 import chat.schildi.revenge.model.LoadCheckPoint
+import chat.schildi.revenge.model.conversation.ConversationViewModel
 import chat.schildi.revenge.model.conversation.EventJumpTarget
 import chat.schildi.revenge.model.conversation.LocalEventActionViewModel
 import chat.schildi.revenge.preferences.value
 import chat.schildi.revenge.publishTitle
 import chat.schildi.revenge.viewModelKey
+import chat.schildi.theme.scExposures
 import co.touchlab.kermit.Logger
 import io.element.android.libraries.matrix.api.room.CreateTimelineParams
 import io.element.android.libraries.matrix.api.room.CurrentUserMembership
@@ -133,18 +136,24 @@ fun ConversationScreen(
         }
     }
 
+    // Horizontal insets always apply to the whole screen. Vertical insets are applied per section, so that the
+    // compact layout can draw its gray top bar / composer bar behind the system bars.
     BoxWithConstraints(
-        modifier.fillMaxSize().let {
-            if (viewModel.modeSupportsComposer) {
-                it.safeDrawingPadding()
-            } else {
-                it.windowInsetsPadding(
-                    WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
-                )
-            }
-        },
+        modifier.fillMaxSize().windowInsetsPadding(
+            WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal),
+        ),
         contentAlignment = Alignment.Center,
     ) {
+        val compact = maxWidth < Dimens.compactActionBarThreshold
+        val fullVerticalInsets = Modifier.windowInsetsPadding(
+            WindowInsets.safeDrawing.only(
+                if (viewModel.modeSupportsComposer) {
+                    WindowInsetsSides.Vertical
+                } else {
+                    WindowInsetsSides.Top
+                },
+            ),
+        )
         val contentHeight = maxHeight
         val density = LocalDensity.current
 
@@ -191,9 +200,9 @@ fun ConversationScreen(
                 else -> false
             }
             if (isRoomPreview) {
-                RoomPreviewScreen(roomInfo, roomPreview, viewModel, Modifier.fillMaxSize(), contentModifier)
+                RoomPreviewScreen(roomInfo, roomPreview, viewModel, Modifier.fillMaxSize().then(fullVerticalInsets), contentModifier)
             } else {
-                SplashScreenContent(contentModifier, viewModel.loadState)
+                SplashScreenContent(contentModifier.then(fullVerticalInsets), viewModel.loadState)
             }
             return@BoxWithConstraints
         }
@@ -351,7 +360,16 @@ fun ConversationScreen(
                 }
             }
             val highlightedActionEventId = viewModel.highlightedActionEventId.collectAsState().value
-            Column(contentModifier
+            val minimalMode = ScPrefs.MINIMAL_MODE.value()
+            // Compact: top bar and composer bar handle their own insets, so they can draw behind the system bars.
+            val columnInsets = when {
+                !compact -> fullVerticalInsets
+                // No top bar to take care of the status bar inset
+                minimalMode -> Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+                else -> Modifier
+            }
+            Column(columnInsets
+                .then(contentModifier)
                 .fillMaxSize()
                 .alpha(dragAlpha.value)
                 .dragAndDropTarget(
@@ -364,7 +382,7 @@ fun ConversationScreen(
                 ConversationTopNavigation(
                     viewModel,
                     hasTimeline = true,
-                    compact = this@BoxWithConstraints.maxWidth < Dimens.compactActionBarThreshold,
+                    compact = compact,
                 )
 
                 ConversationTopDebugHeader(viewModel, Modifier.fillMaxWidth())
@@ -530,15 +548,6 @@ fun ConversationScreen(
                     }
                 }
 
-                val identityStateViolations = viewModel.identityStateViolations.collectAsState(null).value ?: persistentListOf()
-                IdentityStateChangesRow(
-                    identityStateViolations,
-                    roomMembersById.value,
-                    acknowledge = { viewModel.acknowledgeIdentityStateChange(actionContext, it) },
-                )
-
-                RoomUpgradeRow(viewModel)
-
                 val shouldShowComposer = viewModel.shouldShowComposer.collectAsState().value
                 val shouldAutoFocusComposer = FocusRole.MESSAGE_COMPOSER.shouldAutoRequestFocus()
                 LaunchedEffect(shouldShowComposer) {
@@ -546,14 +555,34 @@ fun ConversationScreen(
                         keyHandler.focusByRole(FocusRole.MESSAGE_COMPOSER)
                     }
                 }
-                AnimatedVisibility(
-                    visible = shouldShowComposer,
-                    enter = slideInVertically(tween(Anim.DURATION)) { it } +
-                            expandVertically(tween(Anim.DURATION), expandFrom = Alignment.Bottom),
-                    exit = slideOutVertically(tween(Anim.DURATION)) { it } +
-                            shrinkVertically(tween(Anim.DURATION), shrinkTowards = Alignment.Bottom),
-                ) {
-                    ComposerRow(viewModel)
+                // Compact: gray bar behind the composer, extending below the navigation bar / keyboard
+                val bottomBarColor = MaterialTheme.scExposures.appBarBg ?: MaterialTheme.colorScheme.surfaceContainerHigh
+                val bottomBarModifier = if (compact && viewModel.modeSupportsComposer) {
+                    Modifier
+                        .background(if (shouldShowComposer) bottomBarColor else Color.Transparent)
+                        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
+                } else {
+                    Modifier
+                }
+                Column(Modifier.fillMaxWidth().then(bottomBarModifier)) {
+                    val identityStateViolations = viewModel.identityStateViolations.collectAsState(null).value ?: persistentListOf()
+                    IdentityStateChangesRow(
+                        identityStateViolations,
+                        roomMembersById.value,
+                        acknowledge = { viewModel.acknowledgeIdentityStateChange(actionContext, it) },
+                    )
+
+                    RoomUpgradeRow(viewModel)
+
+                    AnimatedVisibility(
+                        visible = shouldShowComposer,
+                        enter = slideInVertically(tween(Anim.DURATION)) { it } +
+                                expandVertically(tween(Anim.DURATION), expandFrom = Alignment.Bottom),
+                        exit = slideOutVertically(tween(Anim.DURATION)) { it } +
+                                shrinkVertically(tween(Anim.DURATION), shrinkTowards = Alignment.Bottom),
+                    ) {
+                        ComposerRow(viewModel, compact = compact)
+                    }
                 }
             }
         }

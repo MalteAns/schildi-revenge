@@ -5,6 +5,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -37,29 +39,32 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
+import chat.schildi.lib.preferences.ComposerFormat
 import chat.schildi.lib.preferences.ScPrefs
-import chat.schildi.revenge.preferences.value
 import chat.schildi.revenge.Dimens
 import chat.schildi.revenge.MessageFormatDefaults
 import chat.schildi.revenge.actions.FocusRole
 import chat.schildi.revenge.actions.currentActionContext
 import chat.schildi.revenge.compose.components.ScIconButton
 import chat.schildi.revenge.compose.components.WithTooltip
+import chat.schildi.revenge.compose.destination.conversation.event.message.MessageRenderContext
 import chat.schildi.revenge.compose.destination.conversation.event.message.ReplyContent
 import chat.schildi.revenge.compose.destination.conversation.event.message.TextLikeMessageContent
 import chat.schildi.revenge.compose.focus.keyFocusable
 import chat.schildi.revenge.model.Attachment
-import chat.schildi.lib.preferences.ComposerFormat
-import chat.schildi.revenge.compose.destination.conversation.event.message.MessageRenderContext
 import chat.schildi.revenge.model.ComposerRoomInfo
 import chat.schildi.revenge.model.ComposerState
 import chat.schildi.revenge.model.ComposerViewModel
 import chat.schildi.revenge.model.DraftType
 import chat.schildi.revenge.model.DraftValue
+import chat.schildi.revenge.preferences.value
 import chat.schildi.theme.scExposures
 import com.beeper.android.messageformat.MatrixBodyParseResult
 import kotlinx.coroutines.Dispatchers
@@ -92,9 +97,13 @@ import shire.res.generated.resources.hint_public_room
 import kotlin.math.min
 
 @Composable
-fun ComposerRow(viewModel: ComposerViewModel, modifier: Modifier = Modifier) {
+fun ComposerRow(
+    viewModel: ComposerViewModel,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+) {
     when (val draftState = viewModel.composerState.collectAsState().value) {
-        is DraftValue -> ComposerRow(draftState, viewModel, modifier)
+        is DraftValue -> ComposerRow(draftState, viewModel, modifier, compact)
         is ComposerState.ComposerLessTimeline -> {}
         is ComposerState.NoSendPermission -> BlockedComposer(stringResource(Res.string.hint_composer_missing_send_permission))
     }
@@ -104,7 +113,8 @@ fun ComposerRow(viewModel: ComposerViewModel, modifier: Modifier = Modifier) {
 fun ComposerRow(
     draftState: DraftValue,
     viewModel: ComposerViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
 ) {
     val suggestionsState = viewModel.composerSuggestions.collectAsState().value
     val composerInfo = viewModel.composerRoomInfo.collectAsState().value
@@ -143,13 +153,36 @@ fun ComposerRow(
             )
         }
         Row(
-            verticalAlignment = Alignment.Bottom,
+            Modifier.then(
+                if (compact) Modifier.padding(Dimens.Conversation.Composer.compactPadding) else Modifier
+            ),
+            verticalAlignment = if (compact) Alignment.CenterVertically else Alignment.Bottom,
         ) {
             val actionContext = currentActionContext()
             AnimatedVisibility(
                 draftState.canAddAttachment(),
             ) {
-                WithTooltip(stringResource(Res.string.action_add_attachment)) {
+                if (compact) {
+                    // Design only for now: round, high-contrast attachment button
+                    Box(
+                        Modifier
+                            .padding(end = Dimens.horizontalItemPadding)
+                            .size(Dimens.Conversation.Composer.compactAddButtonSize)
+                            .alpha(if (isSendInProgress) Dimens.fgDisabledAlpha else 1f)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary)
+                            .clickable(enabled = !isSendInProgress, role = Role.Button) {
+                                viewModel.launchAttachmentPicker(actionContext)
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Default.Add,
+                            stringResource(Res.string.action_add_attachment),
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                        )
+                    }
+                } else WithTooltip(stringResource(Res.string.action_add_attachment)) {
                     ScIconButton(
                         onClick = { viewModel.launchAttachmentPicker(actionContext) },
                         enabled = !isSendInProgress,
@@ -184,12 +217,7 @@ fun ComposerRow(
             var isFocused by remember { mutableStateOf(false) }
             val maxLinesFocused = ScPrefs.COMPOSER_MAX_LINES.value()
             val maxLinesUnfocused = ScPrefs.COMPOSER_MAX_LINES_UNFOCUSED.value()
-            TextField(
-                value = draftState.textFieldValue,
-                onValueChange = {
-                    viewModel.onComposerUpdate(draftState.copy(textFieldValue = it))
-                },
-                label = {
+            val hintContent: @Composable () -> Unit = {
                     val hint = when (draftState.type) {
                         DraftType.TEXT -> stringResource(Res.string.hint_composer_text).appendComposerFormat(draftState)
                         DraftType.NOTICE -> stringResource(Res.string.hint_composer_notice).appendComposerFormat(draftState)
@@ -250,18 +278,37 @@ fun ComposerRow(
                         }
                         Text(hint, color = hintColor)
                     }
+            }
+            val compactFieldShape = Dimens.Conversation.Composer.compactFieldShape
+            TextField(
+                value = draftState.textFieldValue,
+                onValueChange = {
+                    viewModel.onComposerUpdate(draftState.copy(textFieldValue = it))
                 },
+                label = if (compact) null else hintContent,
+                placeholder = if (compact) hintContent else null,
+                shape = if (compact) compactFieldShape else TextFieldDefaults.shape,
                 modifier = Modifier
                     .weight(1f)
-                    .background(MaterialTheme.colorScheme.surface)
+                    .then(
+                        if (compact) {
+                            Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, compactFieldShape)
+                        } else {
+                            Modifier.background(MaterialTheme.colorScheme.surface)
+                        }
+                    )
                     .keyFocusable(role = FocusRole.MESSAGE_COMPOSER)
                     .onFocusChanged {
                         isFocused = it.isFocused
                     },
                 colors = TextFieldDefaults.colors().copy(
-                    focusedContainerColor = Color.Transparent,
-                    unfocusedContainerColor = Color.Transparent,
-                    disabledContainerColor = Color.Transparent,
+                    focusedContainerColor = if (compact) MaterialTheme.colorScheme.surfaceContainerHigh else Color.Transparent,
+                    unfocusedContainerColor = if (compact) MaterialTheme.colorScheme.surfaceContainerHigh else Color.Transparent,
+                    disabledContainerColor = if (compact) MaterialTheme.colorScheme.surfaceContainerHigh else Color.Transparent,
+                    focusedIndicatorColor = if (compact) Color.Transparent else Color.Unspecified,
+                    unfocusedIndicatorColor = if (compact) Color.Transparent else Color.Unspecified,
+                    disabledIndicatorColor = if (compact) Color.Transparent else Color.Unspecified,
+                    errorIndicatorColor = if (compact) Color.Transparent else Color.Unspecified,
                 ),
                 keyboardOptions = KeyboardOptions(
                     capitalization = KeyboardCapitalization.Sentences,

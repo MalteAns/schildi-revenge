@@ -1,18 +1,23 @@
 package chat.schildi.revenge.compose.destination.conversation
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PestControlRodent
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import chat.schildi.lib.preferences.ScPrefs
 import chat.schildi.resources.toStringHolder
@@ -41,6 +46,7 @@ import chat.schildi.revenge.model.conversation.ConversationViewModel
 import chat.schildi.revenge.model.conversation.RoomPreviewViewModel
 import chat.schildi.revenge.preferences.isEnabled
 import chat.schildi.revenge.preferences.value
+import chat.schildi.theme.scExposures
 import io.element.android.libraries.matrix.api.media.MediaSource
 import io.element.android.libraries.matrix.api.room.CreateTimelineParams
 import kotlinx.collections.immutable.persistentListOf
@@ -76,33 +82,82 @@ fun ConversationTopNavigation(
     } else {
         roomInfo?.name ?: ""
     }
-    val avatar = roomInfo?.avatarUrl?.let { MediaSource(it) }
+    // DMs usually have no room avatar of their own, fall back to the other person's one (like the inbox does)
+    val avatar = (
+            roomInfo?.avatarUrl
+                ?: roomInfo?.heroes?.singleOrNull()?.avatarUrl?.takeIf { compact }
+            )?.let { MediaSource(it) }
     val keyHandler = LocalKeyboardActionHandler.current
     val focusParent = LocalFocusParent.current
     val destinationState = LocalDestinationState.current
-    TopNavigation {
+    // Compact layout: gray bar with leading back arrow, round avatar and prominent title
+    val barModifier = if (compact) {
+        Modifier.background(MaterialTheme.scExposures.appBarBg ?: MaterialTheme.colorScheme.surfaceContainerHigh)
+    } else {
+        Modifier
+    }
+    val titleStyle = if (compact) {
+        MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
+    } else {
+        MaterialTheme.typography.bodyLarge
+    }
+    val titleColor = if (compact) {
+        MaterialTheme.colorScheme.onSurface
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    TopNavigation(
+        barModifier,
+        contentColor = if (compact) MaterialTheme.colorScheme.onSurface else null,
+        minHeight = if (compact) Dimens.topAppBarCompactMinHeight else Dimens.topAppBarMinHeight,
+        topInsets = compact,
+    ) {
+        if (compact) {
+            ConversationCloseButton(asBackArrow = true)
+        }
         when (viewModel.timelineParams) {
-            is CreateTimelineParams.Threaded -> TopNavigationSearchOrTitle(stringResource(Res.string.thread))
-            is CreateTimelineParams.PinnedOnly -> TopNavigationSearchOrTitle(stringResource(Res.string.pinned_messages))
+            is CreateTimelineParams.Threaded -> TopNavigationSearchOrTitle(
+                stringResource(Res.string.thread),
+                titleStyle = titleStyle,
+                titleColor = titleColor,
+            )
+            is CreateTimelineParams.PinnedOnly -> TopNavigationSearchOrTitle(
+                stringResource(Res.string.pinned_messages),
+                titleStyle = titleStyle,
+                titleColor = titleColor,
+            )
             else -> {
-                if (avatar != null) {
+                if (avatar != null || compact) {
                     AvatarImage(
                         source = avatar,
-                        size = Dimens.topAppBarIconSize,
+                        size = if (compact) Dimens.topAppBarCompactAvatarSize else Dimens.topAppBarIconSize,
                         displayName = title,
-                        modifier = Modifier.padding(
-                            start = Dimens.windowPadding,
-                            top = Dimens.listPadding,
-                            bottom = Dimens.listPadding,
-                        ),
+                        shape = if (compact) CircleShape else Dimens.avatarShape,
+                        modifier = if (compact) {
+                            Modifier.padding(start = Dimens.horizontalItemPaddingSmall)
+                        } else {
+                            Modifier.padding(
+                                start = Dimens.windowPadding,
+                                top = Dimens.listPadding,
+                                bottom = Dimens.listPadding,
+                            )
+                        },
                     )
                 }
                 if (hasTimeline) {
-                    TopNavigationSearchOrTitle(title) {
+                    TopNavigationSearchOrTitle(
+                        title,
+                        titleStyle = titleStyle,
+                        titleColor = titleColor,
+                    ) {
                         destinationState?.navigate(Destination.RoomDetails(viewModel.sessionId, viewModel.roomId))
                     }
                 } else {
-                    TopNavigationTitle(title) {
+                    TopNavigationTitle(
+                        title,
+                        titleStyle = titleStyle,
+                        titleColor = titleColor,
+                    ) {
                         destinationState?.navigate(Destination.RoomDetails(viewModel.sessionId, viewModel.roomId))
                     }
                 }
@@ -225,50 +280,63 @@ fun ConversationTopNavigation(
                 }
             }
         }
-        val canBypassMarkReadOnClose = ScPrefs.AUTO_MARK_AS_READ_TRIGGER.value() == ScPrefs.AutoMarkAsReadTrigger.ROOM_CLOSE.name
-        if (canBypassMarkReadOnClose) {
-            val directLongpressAction = ScPrefs.LONGPRESS_CLOSE_TO_UNREAD.value()
-            val focusId = rememberFocusId()
-            WithContextMenu(
-                focusId = focusId,
-                entries = persistentListOf(
-                    ContextMenuActionEntry(
-                        Res.string.action_close.toStringHolder(),
-                        null,
-                        Action.Navigation.CloseDestination,
-                        keyboardShortcut = Key.C,
-                    ),
-                    ContextMenuActionEntry(
-                        Res.string.action_close_unread.toStringHolder(),
-                        null,
-                        Action.Conversation.CloseConversationBypassingReadTracking,
-                        keyboardShortcut = Key.U,
-                    ),
-                ),
-            ) { openContextMenu ->
-                // Cannot use TopNavigationIcon / IconButton for longpress actions :/
-                Icon(
-                    Icons.Default.Close,
-                    stringResource(Res.string.action_close),
-                    modifier = Modifier.keyFocusable(
-                        FocusRole.SHADOW_ITEM,
-                        id = focusId,
-                        actionProvider = actionProvider(
-                            primaryAction = InteractionAction.Invoke {
-                                destinationState?.closeScreen(keyHandler)
-                                true
-                            },
-                            secondaryAction = if (directLongpressAction) {
-                                InteractionAction.HandleAction(focusId, Action.Conversation.CloseConversationBypassingReadTracking)
-                            } else {
-                                openContextMenu
-                            },
-                        ),
-                    ).minimumInteractiveComponentSize().size(24.dp),
-                )
-            }
-        } else {
-            TopNavigationCloseOrNavigateToInboxIcon()
+        if (!compact) {
+            ConversationCloseButton(asBackArrow = false)
         }
+    }
+}
+
+/**
+ * Close / navigate-back button of the conversation top bar.
+ * [asBackArrow] renders the (leading) back arrow instead of the (trailing) close / inbox icon.
+ */
+@Composable
+private fun ConversationCloseButton(asBackArrow: Boolean) {
+    val keyHandler = LocalKeyboardActionHandler.current
+    val destinationState = LocalDestinationState.current
+    val canBypassMarkReadOnClose = ScPrefs.AUTO_MARK_AS_READ_TRIGGER.value() == ScPrefs.AutoMarkAsReadTrigger.ROOM_CLOSE.name
+    if (canBypassMarkReadOnClose) {
+        val directLongpressAction = ScPrefs.LONGPRESS_CLOSE_TO_UNREAD.value()
+        val focusId = rememberFocusId()
+        WithContextMenu(
+            focusId = focusId,
+            entries = persistentListOf(
+                ContextMenuActionEntry(
+                    Res.string.action_close.toStringHolder(),
+                    null,
+                    Action.Navigation.CloseDestination,
+                    keyboardShortcut = Key.C,
+                ),
+                ContextMenuActionEntry(
+                    Res.string.action_close_unread.toStringHolder(),
+                    null,
+                    Action.Conversation.CloseConversationBypassingReadTracking,
+                    keyboardShortcut = Key.U,
+                ),
+            ),
+        ) { openContextMenu ->
+            // Cannot use TopNavigationIcon / IconButton for longpress actions :/
+            Icon(
+                if (asBackArrow) Icons.AutoMirrored.Filled.ArrowBack else Icons.Default.Close,
+                stringResource(Res.string.action_close),
+                modifier = Modifier.keyFocusable(
+                    FocusRole.SHADOW_ITEM,
+                    id = focusId,
+                    actionProvider = actionProvider(
+                        primaryAction = InteractionAction.Invoke {
+                            destinationState?.closeScreen(keyHandler)
+                            true
+                        },
+                        secondaryAction = if (directLongpressAction) {
+                            InteractionAction.HandleAction(focusId, Action.Conversation.CloseConversationBypassingReadTracking)
+                        } else {
+                            openContextMenu
+                        },
+                    ),
+                ).minimumInteractiveComponentSize().size(24.dp),
+            )
+        }
+    } else {
+        TopNavigationCloseOrNavigateToInboxIcon(asBackArrow = asBackArrow)
     }
 }

@@ -12,29 +12,39 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Inbox
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import chat.schildi.lib.preferences.ScPrefs
-import chat.schildi.revenge.preferences.value
 import chat.schildi.revenge.Anim
 import chat.schildi.revenge.Destination
 import chat.schildi.revenge.Dimens
@@ -46,6 +56,7 @@ import chat.schildi.revenge.compose.search.LocalSearchProvider
 import chat.schildi.revenge.compose.search.SearchBar
 import chat.schildi.revenge.compose.search.SearchProvider
 import chat.schildi.revenge.platformWindowManager
+import chat.schildi.revenge.preferences.value
 import org.jetbrains.compose.resources.stringResource
 import shire.res.generated.resources.Res
 import shire.res.generated.resources.action_close
@@ -54,7 +65,14 @@ import shire.res.generated.resources.hint_search
 import kotlin.uuid.Uuid
 
 @Composable
-fun TopNavigation(content: @Composable RowScope.() -> Unit) {
+fun TopNavigation(
+    modifier: Modifier = Modifier,
+    contentColor: Color? = null,
+    minHeight: Dp = Dimens.topAppBarMinHeight,
+    // Reserve space for the top system bars *above* the bar content, so [modifier] (e.g. a background) covers them
+    topInsets: Boolean = false,
+    content: @Composable RowScope.() -> Unit,
+) {
     val visible = !ScPrefs.MINIMAL_MODE.value()
     AnimatedVisibility(
         visible = visible,
@@ -63,13 +81,24 @@ fun TopNavigation(content: @Composable RowScope.() -> Unit) {
         exit = slideOutVertically(tween(Anim.DURATION)) { -it } +
                 shrinkVertically(tween(Anim.DURATION), shrinkTowards = Alignment.Top),
     ) {
-        Row(
-            Modifier
-                .heightIn(min = Dimens.topAppBarMinHeight)
-                .fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            content()
+        Column(modifier.fillMaxWidth()) {
+            if (topInsets) {
+                Spacer(Modifier.windowInsetsTopHeight(WindowInsets.safeDrawing))
+            }
+            Row(
+                Modifier
+                    .heightIn(min = minHeight)
+                    .fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (contentColor != null) {
+                    CompositionLocalProvider(LocalContentColor provides contentColor) {
+                        content()
+                    }
+                } else {
+                    content()
+                }
+            }
         }
     }
 }
@@ -101,7 +130,10 @@ fun TopNavigationIcon(
 }
 
 @Composable
-fun TopNavigationCloseOrNavigateToInboxIcon(modifier: Modifier = Modifier) {
+fun TopNavigationCloseOrNavigateToInboxIcon(
+    modifier: Modifier = Modifier,
+    asBackArrow: Boolean = false,
+) {
     val destinationState = LocalDestinationState.current
     val keyHandler = LocalKeyboardActionHandler.current
     val showInboxIcon = when {
@@ -120,7 +152,7 @@ fun TopNavigationCloseOrNavigateToInboxIcon(modifier: Modifier = Modifier) {
     AnimatedContent(showInboxIcon) {
         if (it) {
             TopNavigationIcon(
-                Icons.Default.Inbox,
+                if (asBackArrow) Icons.AutoMirrored.Filled.ArrowBack else Icons.Default.Inbox,
                 stringResource(Res.string.action_open_inbox),
                 modifier,
             ) {
@@ -128,7 +160,7 @@ fun TopNavigationCloseOrNavigateToInboxIcon(modifier: Modifier = Modifier) {
             }
         } else {
             TopNavigationIcon(
-                Icons.Default.Close,
+                if (asBackArrow) Icons.AutoMirrored.Filled.ArrowBack else Icons.Default.Close,
                 stringResource(Res.string.action_close),
                 modifier,
             ) {
@@ -142,6 +174,8 @@ fun TopNavigationCloseOrNavigateToInboxIcon(modifier: Modifier = Modifier) {
 fun RowScope.TopNavigationTitle(
     title: String,
     modifier: Modifier = Modifier,
+    titleStyle: TextStyle = MaterialTheme.typography.bodyLarge,
+    titleColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     onTitleClick: (() -> Unit)? = null,
 ) {
     Box(
@@ -166,8 +200,8 @@ fun RowScope.TopNavigationTitle(
             Text(
                 title,
                 Modifier.padding(horizontal = Dimens.windowPadding),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodyLarge,
+                color = titleColor,
+                style = titleStyle,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -183,6 +217,8 @@ fun RowScope.TopNavigationSearchOrTitle(
         throw IllegalStateException("Called TopNavigationSearchOrTitle without search provider")
     },
     searchFocusContainer: Uuid? = null,
+    titleStyle: TextStyle = MaterialTheme.typography.bodyLarge,
+    titleColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     onTitleClick: (() -> Unit)? = null,
 ) {
     val keyHandler = LocalKeyboardActionHandler.current
@@ -201,7 +237,7 @@ fun RowScope.TopNavigationSearchOrTitle(
                     showClearButton = true,
                 )
             } else {
-                TopNavigationTitle(title, Modifier.weight(1f), onTitleClick)
+                TopNavigationTitle(title, Modifier.weight(1f), titleStyle, titleColor, onTitleClick)
                 TopNavigationIcon(
                     Icons.Default.Search,
                     stringResource(Res.string.hint_search)
